@@ -35,7 +35,7 @@ class RagTutorService:
         chunk_size: int = 1000,
         chunk_overlap: int = 100,
         max_retrieval_docs: int = 10,
-        reranker_top_k: int = 3
+        reranker_top_k: int = 5 
     ):
         """
         Initialize RAG Tutor Service
@@ -53,6 +53,7 @@ class RagTutorService:
         self.ai_service = ai_service or GeminiService()
         self.embedding_service = embedding_service or EmbeddingService()
         self.vector_store = vector_store or FAISSVectorStore()
+
         
         # Initialize file loader factory with AI service for image processing
         self.file_loader_factory = FileLoaderFactory(ai_service=self.ai_service)
@@ -131,7 +132,7 @@ QUY TẮC:
             
             logger.info(f"📄 Extracted {len(chunks)} chunks from {filename}")
             
-            # Create vector documents (ChromaDB will generate embeddings)
+            # Create vector documents 
             vector_documents = []
 
             for i, chunk in enumerate(chunks):
@@ -158,7 +159,6 @@ QUY TẮC:
                 vector_documents.append(vector_doc)
 
             
-            logger.debug(">>> Before vector_store.add_documents")
             # Store in vector database
             collection_name = f"subject_{subject_id}"
             success = await self.vector_store.add_documents(vector_documents, collection_name)
@@ -195,7 +195,10 @@ QUY TẮC:
         question: str,
         subject_id: str,
         chat_history: Optional[List[ChatMessage]] = None,
-        use_reranking: bool = True
+        use_reranking: bool = True,
+        question_image: Optional[str] = None,
+        option_images: Optional[List[Optional[str]]] = None,
+        force_fallback: bool = False
     ) -> AIResponse:
         """
         Answer a question using RAG with subject-specific context
@@ -205,6 +208,9 @@ QUY TẮC:
             subject_id: Subject identifier for context filtering
             chat_history: Previous conversation history
             use_reranking: Whether to use reranking for better results
+            question_image: Base64 encoded question image
+            option_images: List of base64 encoded option images
+            force_fallback: Force fallback to Gemini even if context is found
             
         Returns:
             AI response with answer and metadata
@@ -213,7 +219,6 @@ QUY TẮC:
             logger.info(f"🤔 Processing question for subject {subject_id}: {question[:100]}...")
             
             # Search for relevant documents
-            # ChromaDB will automatically create embedding from query text
             collection_name = f"subject_{subject_id}"
             search_results = await self.vector_store.search(
                 query_text=question,
@@ -222,17 +227,44 @@ QUY TẮC:
                 filters={"subject_id": subject_id}
             )
             
-            if not search_results:
-                # No relevant documents found
-                return AIResponse(
-                    success=True,
-                    content="Xin lỗi, Rin-chan không tìm thấy thông tin liên quan trong tài liệu môn học. Bạn có thể đặt câu hỏi khác không? 🤗",
-                    metadata={
+            if not search_results or force_fallback:
+                # No relevant documents found - use Gemini fallback
+                logger.info(f"📚 No context found for subject {subject_id}, using Gemini fallback")
+                
+                # Use built-in fallback of GeminiService
+                if hasattr(self.ai_service, "generate_fallback_response"):
+                    fallback_response = await self.ai_service.generate_fallback_response(
+                        question=question,
+                        subject_id=subject_id,
+                        question_image=question_image,
+                        option_images=option_images,
+                        chat_history=chat_history
+                    )
+                else:
+                    fallback_response = AIResponse(success=False, error="AI service does not support fallback mode")
+                
+                if fallback_response.success:
+                    # Update metadata
+                    fallback_response.metadata.update({
                         "context_found": False,
                         "subject_id": subject_id,
-                        "search_results_count": 0
-                    }
-                )
+                        "search_results_count": 0,
+                        "fallback_used": True
+                    })
+                    
+                    return fallback_response
+                else:
+                    # Fallback failed, return error
+                    return AIResponse(
+                        success=False,
+                        error="Không tìm thấy tài liệu và không thể tạo phản hồi thay thế",
+                        metadata={
+                            "context_found": False,
+                            "subject_id": subject_id,
+                            "search_results_count": 0,
+                            "fallback_failed": True
+                        }
+                    )
             
             logger.info(f"🔍 Found {len(search_results)} relevant documents")
             
@@ -276,7 +308,7 @@ QUY TẮC:
             # Create chat messages with context
             messages = [
                 ChatMessage(role="system", content=self.system_prompt),
-                ChatMessage(role="system", content=f"NGỮ CẢNH TÀI LIỆU:\n{context}")
+                ChatMessage(role="system", content=f"NGỮ CẢNH TÀI LIỆU MÔN HỌC {subject_id}:\n{context}")
             ]
             
             # Add chat history if provided

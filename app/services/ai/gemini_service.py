@@ -31,7 +31,6 @@ class GeminiService(AIService):
         Args:
             api_keys: List of Gemini API keys. If None, uses from settings
         """
-        self.api_keys = api_keys or settings.gemini_key_list
         self.api_keys = api_keys.split(',')
         logger.info(f"API Keys: {self.api_keys}")
 
@@ -56,6 +55,22 @@ class GeminiService(AIService):
             HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
             HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
         }
+        
+        # Rin-chan fallback system prompt – used when RAG cannot provide context
+        self.fallback_system_prompt = """
+Bạn là Rin-chan, một trợ lý AI thông minh và thân thiện. 
+Bạn vừa báo rằng không tìm thấy thông tin trong tài liệu môn học.
+Bây giờ hãy trả lời câu hỏi bằng kiến thức vốn có của bạn.
+
+Quy tắc trả lời:
+1. Luôn thừa nhận rằng thông tin này không có trong tài liệu môn học mà bạn biết
+2. Trả lời bằng kiến thức chung một cách chi tiết và hữu ích
+3. Giữ tone thân thiện, nhiệt tình như Rin-chan
+4. Sử dụng emoji phù hợp để tạo cảm giác gần gũi
+
+Ví dụ cách bắt đầu câu trả lời:
+"Mặc dù Rin-chan không tìm thấy thông tin này trong tài liệu môn học này mà Rin-chan có, nhưng Rin-chan có thể giải thích dựa trên kiến thức chung..."
+"""
         
         logger.info(f"Initialized GeminiService with {len(self.api_keys)} API keys")
     
@@ -179,9 +194,10 @@ class GeminiService(AIService):
     
     async def _generate_with_retry(
         self,
-        prompt: str,
-        model_name: str,
+        prompt: Optional[str] = None,
+        model_name: Optional[str] = None,
         image_data: Optional[str] = None,
+        content_parts: Optional[List[Any]] = None,
         max_retries: Optional[int] = None,
         **kwargs
     ) -> AIResponse:
@@ -221,10 +237,13 @@ class GeminiService(AIService):
                 )
                 
                 # Prepare content
-                if image_data:
-                    # Multimodal request
+                if content_parts is not None:
+                    # Pre-formatted parts (can include text & images)
+                    content = content_parts
+                elif image_data:
+                    # Single image with prompt
                     content = [
-                        {"text": prompt},
+                        {"text": prompt or ""},
                         {
                             "inline_data": {
                                 "mime_type": "image/jpeg",  # Assume JPEG for now
@@ -234,7 +253,7 @@ class GeminiService(AIService):
                     ]
                 else:
                     # Text-only request
-                    content = prompt
+                    content = prompt or ""
                 
                 # Generate response
                 response = await model.generate_content_async(
@@ -279,6 +298,7 @@ class GeminiService(AIService):
                         prompt=prompt,
                         model_name=self.fallback_model,
                         image_data=image_data,
+                        content_parts=content_parts,
                         max_retries=max_retries - attempt,
                         **kwargs
                     )
@@ -316,3 +336,104 @@ class GeminiService(AIService):
             "model_name": self.model_name,
             "fallback_model": self.fallback_model
         } 
+
+    # ------------------------------------------------------------------
+    # Image helpers & fallback response
+
+    def _base64_to_image_part(self, base64_data: str) -> Optional[Dict[str, Any]]:
+        """Convert base64 string or URL to Gemini inline image part."""
+        try:
+            if base64_data.startswith("http://") or base64_data.startswith("https://"):
+                import requests, mimetypes
+                resp = requests.get(base64_data, timeout=10)
+                if resp.status_code != 200:
+                    raise ValueError(f"HTTP {resp.status_code}")
+                mime_type = resp.headers.get("Content-Type") or mimetypes.guess_type(base64_data)[0] or "image/jpeg"
+                image_bytes = resp.content
+            else:
+                # Remove data URL prefix if present
+                if base64_data.startswith("data:image/"):
+                    base64_data = base64_data.split(',')[1]
+                image_bytes = base64.b64decode(base64_data)
+                mime_type = "image/jpeg"
+
+            return {
+                "inline_data": {
+                    "mime_type": mime_type,
+                    "data": image_bytes
+                }
+            }
+        except Exception as e:
+            logger.error(f"Failed to convert image data: {e}")
+            return None
+
+    async def generate_fallback_response(
+        self,
+        question: str,
+        subject_id: str,
+        question_image: Optional[str] = None,
+        option_images: Optional[List[Optional[str]]] = None,
+        chat_history: Optional[List[ChatMessage]] = None,
+        model_name: Optional[str] = None,
+        **kwargs
+    ) -> AIResponse:
+        """Fallback answer when no RAG context is found."""
+        try:
+            logger.info(f"🤖 Generating fallback response for subject {subject_id}")
+
+            # Build prompt with personality & disclaimer
+            prompt = f"{self.fallback_system_prompt}\n\nCâu hỏi thuộc môn: {subject_id}\n"
+
+            # Append recent chat history (max 3 turns)
+            if chat_history:
+                prompt += "\nLịch sử trò chuyện:\n"
+                for msg in chat_history[-3:]:
+                    prompt += f"{msg.role}: {msg.content}\n"
+                prompt += "\n"
+
+            prompt += f"Câu hỏi hiện tại: {question}"
+
+            content_parts: List[Any] = [prompt]
+
+            # Attach images if provided
+            if question_image:
+                img_part = self._base64_to_image_part(question_image)
+                if img_part:
+                    content_parts.append(img_part)
+                    content_parts.append("Hình ảnh trên là câu hỏi. Hãy phân tích và trả lời dựa trên nội dung hình ảnh.")
+
+            if option_images:
+                for idx, opt_img in enumerate(option_images):
+                    if opt_img:
+                        img_part = self._base64_to_image_part(opt_img)
+                        if img_part:
+                            content_parts.append(img_part)
+                            content_parts.append(f"Đây là hình ảnh đáp án {chr(65 + idx)}.")
+
+            # Use provided or fallback model
+            selected_model = model_name or self.fallback_model
+
+            ai_resp = await self._generate_with_retry(
+                prompt="",  # not used when content_parts provided
+                model_name=selected_model,
+                content_parts=content_parts,
+                **kwargs
+            )
+
+            # Enrich metadata
+            ai_resp.metadata = ai_resp.metadata or {}
+            ai_resp.metadata.update({
+                "source": "gemini_fallback",
+                "subject_id": subject_id,
+                "has_images": bool(question_image or (option_images and any(option_images)))
+            })
+
+            return ai_resp
+
+        except Exception as e:
+            logger.error(f"Gemini fallback error: {e}")
+            return AIResponse(
+                success=False,
+                error=str(e),
+                metadata={"source": "gemini_fallback", "subject_id": subject_id}
+            )

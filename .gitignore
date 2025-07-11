@@ -1,0 +1,34 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+.env
+.venv/
+venv/
+ENV/
+
+# Environment variables and secrets
+*.env
+.env.*
+
+# Logs
+*.log
+
+# IDE / Editor folders
+.vscode/
+.idea/
+
+# OS generated files
+.DS_Store
+
+# Data & model artifacts
+vector_db/
+*.faiss
+*.pkl
+*.json
+
+# Misc
+*.sqlite3 

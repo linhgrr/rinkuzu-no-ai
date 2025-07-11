@@ -17,6 +17,10 @@ class AskQuestionRequest(BaseModel):
     subject_id: str = Field(..., description="Subject identifier for context")
     chat_history: Optional[List[Dict[str, str]]] = Field(None, description="Previous conversation history")
     use_reranking: bool = Field(True, description="Whether to use reranking for better results")
+    # Add image support
+    question_image: Optional[str] = Field(None, description="Base64 encoded question image")
+    option_images: Optional[List[Optional[str]]] = Field(None, description="Base64 encoded option images")
+    force_fallback: bool = Field(False, description="Force fallback to Gemini even if context is found")
     
     model_config = {
         "json_schema_extra": {
@@ -27,7 +31,10 @@ class AskQuestionRequest(BaseModel):
                     {"role": "user", "content": "CPU là gì?"},
                     {"role": "assistant", "content": "CPU là bộ xử lý trung tâm..."}
                 ],
-                "use_reranking": True
+                "use_reranking": True,
+                "question_image": None,
+                "option_images": None,
+                "force_fallback": False
             }
         }
     }

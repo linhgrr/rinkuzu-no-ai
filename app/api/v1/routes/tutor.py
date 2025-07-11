@@ -124,7 +124,10 @@ async def ask_question(
         question=request.question,
         subject_id=subject_id,
         chat_history=chat_history,
-        use_reranking=request.use_reranking
+        use_reranking=request.use_reranking,
+        question_image=request.question_image,
+        option_images=request.option_images,
+        force_fallback=request.force_fallback
     )
     
     if response.success:

@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     chunk_size: int = Field(1000, env="CHUNK_SIZE")
     chunk_overlap: int = Field(100, env="CHUNK_OVERLAP")
     max_retrieval_docs: int = Field(10, env="MAX_RETRIEVAL_DOCS")
-    reranker_top_k: int = Field(3, env="RERANKER_TOP_K")
+    reranker_top_k: int = Field(5, env="RERANKER_TOP_K")
     
     # File upload limits
     max_file_size: int = Field(50 * 1024 * 1024, env="MAX_FILE_SIZE")  # 50MB

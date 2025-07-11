@@ -197,14 +197,13 @@ class FAISSVectorStore(VectorStore):
                     # Update the stored vector store
                     self._vector_stores[collection_name] = vector_store
                 else:
-                    # Add documents to existing FAISS index
                     logger.info(">>> Adding documents to existing FAISS index")
                     await asyncio.wait_for(
                         asyncio.to_thread(
                             vector_store.add_documents,
                             langchain_docs
                         ),
-                        timeout=60.0  # 60 second timeout - FAISS should be much faster
+                        timeout=60.0 
                     )
                 
                 logger.info(f"✅ Successfully added {len(langchain_docs)} document chunks to FAISS")
