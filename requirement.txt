@@ -1,0 +1,7 @@
+- Thay thế chức năng extract qquiz sang đây
+- Chức năng ask Ai
+
+
+** Chức năng mới
+- RAG tài liệu theo môn học (bao gồm UI up tài liệu và cơ chế hybrid search)
+- ML detect duplicate ???

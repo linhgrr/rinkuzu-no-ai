@@ -1,0 +1,43 @@
+# FastAPI and web framework
+fastapi==0.111.0
+uvicorn[standard]
+python-multipart
+pydantic
+pydantic-settings
+python-dotenv
+
+# AI and ML libraries
+google-generativeai
+openai
+sentence-transformers
+transformers
+torch
+
+# LangChain for better vector store management
+langchain
+langchain-community
+langchain-chroma
+langchain-text-splitters
+langchain-huggingface
+
+# Vector database and embeddings - FAISS for better stability
+faiss-cpu
+chromadb
+onnxruntime==1.16.0
+numpy < 2.0.0
+pandas
+scikit-learn
+
+# File processing
+PyMuPDF
+python-docx
+python-pptx
+Pillow
+opencv-python
+python-magic
+
+# Utilities
+aiofiles
+httpx
+loguru
+tenacity

@@ -1,0 +1,1 @@
+"""Abstract interfaces for dependency injection and loose coupling""" 
