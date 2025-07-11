@@ -31,7 +31,15 @@ class GeminiService(AIService):
         Args:
             api_keys: List of Gemini API keys. If None, uses from settings
         """
-        self.api_keys = api_keys.split(',')
+        # Normalize API keys to list
+        if api_keys is None:
+            self.api_keys = settings.gemini_keys.split(',') if settings.gemini_keys else []
+        elif isinstance(api_keys, str):
+            self.api_keys = [k.strip() for k in api_keys.split(',') if k.strip()]
+        else:
+            # Assume already list-like
+            self.api_keys = api_keys
+
         logger.info(f"API Keys: {self.api_keys}")
 
         if not self.api_keys:
@@ -111,46 +119,67 @@ Ví dụ cách bắt đầu câu trả lời:
         )
     
     async def chat(
-        self, 
+        self,
         messages: List[ChatMessage],
+        images: Optional[List[Union[bytes, str]]] = None,
         model_name: Optional[str] = None,
         temperature: float = 0.7,
-        **kwargs
+        **kwargs,
     ) -> AIResponse:
-        """
-        Handle multi-turn chat conversation
-        
+        """Multi-turn chat with optional images.
+
         Args:
-            messages: List of chat messages
-            model_name: Optional model override
-            temperature: Generation temperature
-            **kwargs: Additional parameters
-            
-        Returns:
-            AIResponse with chat reply
+            messages: Conversation history (system / user / assistant).
+            images: List of base64 strings, URLs, or raw bytes representing images to include.
+            model_name: Override model.
+            temperature: Sampling temperature.
         """
-        # Convert messages to Gemini format
-        chat_history = []
+        # Build plain-text prompt from messages
         current_prompt = ""
-        
+
         for msg in messages:
             if msg.role == "system":
-                # Add system message as context
                 current_prompt = f"System: {msg.content}\n\n" + current_prompt
             elif msg.role == "user":
                 current_prompt += f"User: {msg.content}\n"
             elif msg.role == "assistant":
                 current_prompt += f"Assistant: {msg.content}\n"
-        
-        # Add final user prompt
+
+        # Add assistant cue
         current_prompt += "Assistant: "
-        
-        return await self._generate_with_retry(
-            prompt=current_prompt,
-            model_name=model_name or self.model_name,
-            temperature=temperature,
-            **kwargs
-        )
+
+        # Prepare images if supplied
+        content_parts: Optional[List[Any]] = None
+
+        if images:
+            content_parts = [current_prompt]
+
+            for img in images:
+                # Convert bytes → base64 if necessary
+                if isinstance(img, (bytes, bytearray)):
+                    import base64 as _b64
+                    img = _b64.b64encode(img).decode("utf-8")
+
+                img_part = self._base64_to_image_part(img) if isinstance(img, str) else None
+                if img_part:
+                    content_parts.append(img_part)
+
+        # Choose call path
+        if content_parts is not None:
+            return await self._generate_with_retry(
+                prompt="", 
+                model_name=model_name or self.model_name,
+                content_parts=content_parts,
+                temperature=temperature,
+                **kwargs,
+            )
+        else:
+            return await self._generate_with_retry(
+                prompt=current_prompt,
+                model_name=model_name or self.model_name,
+                temperature=temperature,
+                **kwargs,
+            )
     
     async def process_with_image(
         self,
@@ -375,65 +404,39 @@ Ví dụ cách bắt đầu câu trả lời:
         option_images: Optional[List[Optional[str]]] = None,
         chat_history: Optional[List[ChatMessage]] = None,
         model_name: Optional[str] = None,
-        **kwargs
+        **kwargs,
     ) -> AIResponse:
-        """Fallback answer when no RAG context is found."""
-        try:
-            logger.info(f"🤖 Generating fallback response for subject {subject_id}")
+        """Backward-compatibility wrapper: delegates to chat()."""
 
-            # Build prompt with personality & disclaimer
-            prompt = f"{self.fallback_system_prompt}\n\nCâu hỏi thuộc môn: {subject_id}\n"
+        # Build system prompt with subject context
+        system_msg = f"{self.fallback_system_prompt}\n\nCâu hỏi thuộc môn: {subject_id}"
 
-            # Append recent chat history (max 3 turns)
-            if chat_history:
-                prompt += "\nLịch sử trò chuyện:\n"
-                for msg in chat_history[-3:]:
-                    prompt += f"{msg.role}: {msg.content}\n"
-                prompt += "\n"
+        messages = [ChatMessage(role="system", content=system_msg)]
 
-            prompt += f"Câu hỏi hiện tại: {question}"
+        if chat_history:
+            messages.extend(chat_history)
 
-            content_parts: List[Any] = [prompt]
+        messages.append(ChatMessage(role="user", content=question))
 
-            # Attach images if provided
-            if question_image:
-                img_part = self._base64_to_image_part(question_image)
-                if img_part:
-                    content_parts.append(img_part)
-                    content_parts.append("Hình ảnh trên là câu hỏi. Hãy phân tích và trả lời dựa trên nội dung hình ảnh.")
+        images: List[str] = []
+        if question_image:
+            images.append(question_image)
+        if option_images:
+            images.extend([img for img in option_images if img])
 
-            if option_images:
-                for idx, opt_img in enumerate(option_images):
-                    if opt_img:
-                        img_part = self._base64_to_image_part(opt_img)
-                        if img_part:
-                            content_parts.append(img_part)
-                            content_parts.append(f"Đây là hình ảnh đáp án {chr(65 + idx)}.")
+        ai_resp = await self.chat(
+            messages=messages,
+            images=images if images else None,
+            model_name=model_name or self.fallback_model,
+            temperature=kwargs.get("temperature", 0.7),
+        )
 
-            # Use provided or fallback model
-            selected_model = model_name or self.fallback_model
+        # Add fallback metadata
+        ai_resp.metadata = ai_resp.metadata or {}
+        ai_resp.metadata.update({
+            "source": "gemini_fallback",
+            "subject_id": subject_id,
+            "has_images": bool(images),
+        })
 
-            ai_resp = await self._generate_with_retry(
-                prompt="",  # not used when content_parts provided
-                model_name=selected_model,
-                content_parts=content_parts,
-                **kwargs
-            )
-
-            # Enrich metadata
-            ai_resp.metadata = ai_resp.metadata or {}
-            ai_resp.metadata.update({
-                "source": "gemini_fallback",
-                "subject_id": subject_id,
-                "has_images": bool(question_image or (option_images and any(option_images)))
-            })
-
-            return ai_resp
-
-        except Exception as e:
-            logger.error(f"Gemini fallback error: {e}")
-            return AIResponse(
-                success=False,
-                error=str(e),
-                metadata={"source": "gemini_fallback", "subject_id": subject_id}
-            )
+        return ai_resp

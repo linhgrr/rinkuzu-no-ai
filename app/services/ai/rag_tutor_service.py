@@ -228,33 +228,42 @@ QUY TẮC:
             )
             
             if not search_results or force_fallback:
-                # No relevant documents found - use Gemini fallback
+                # No relevant documents found → use fallback prompt
                 logger.info(f"📚 No context found for subject {subject_id}, using Gemini fallback")
-                
-                # Use built-in fallback of GeminiService
-                if hasattr(self.ai_service, "generate_fallback_response"):
-                    fallback_response = await self.ai_service.generate_fallback_response(
-                        question=question,
-                        subject_id=subject_id,
-                        question_image=question_image,
-                        option_images=option_images,
-                        chat_history=chat_history
-                    )
-                else:
-                    fallback_response = AIResponse(success=False, error="AI service does not support fallback mode")
-                
+
+                # Build system fallback prompt
+                fallback_prompt = f"{getattr(self.ai_service, 'fallback_system_prompt', '')}\n\nCâu hỏi thuộc môn: {subject_id}"
+
+                messages = [ChatMessage(role="system", content=fallback_prompt)]
+
+                if chat_history:
+                    messages.extend(chat_history)
+
+                messages.append(ChatMessage(role="user", content=question))
+
+                images: List[str] = []
+                if question_image:
+                    images.append(question_image)
+                if option_images:
+                    images.extend([img for img in option_images if img])
+
+                fallback_response = await self.ai_service.chat(
+                    messages=messages,
+                    images=images if images else None,
+                    temperature=0.7,
+                    model_name=getattr(self.ai_service, "fallback_model", None)
+                )
+
                 if fallback_response.success:
-                    # Update metadata
+                    fallback_response.metadata = fallback_response.metadata or {}
                     fallback_response.metadata.update({
                         "context_found": False,
                         "subject_id": subject_id,
                         "search_results_count": 0,
                         "fallback_used": True
                     })
-                    
                     return fallback_response
                 else:
-                    # Fallback failed, return error
                     return AIResponse(
                         success=False,
                         error="Không tìm thấy tài liệu và không thể tạo phản hồi thay thế",
@@ -318,8 +327,19 @@ QUY TẮC:
             # Add current question
             messages.append(ChatMessage(role="user", content=question))
             
+            # Prepare images list (question + options)
+            images: List[str] = []
+            if question_image:
+                images.append(question_image)
+            if option_images:
+                images.extend([img for img in option_images if img])
+
             # Get AI response
-            ai_response = await self.ai_service.chat(messages, temperature=0.7)
+            ai_response = await self.ai_service.chat(
+                messages,
+                images=images if images else None,
+                temperature=0.7
+            )
             
             if ai_response.success:
                 # Enhance response metadata

@@ -105,7 +105,7 @@ async def ask_question(
     
     Rin-chan will search relevant documents and provide an answer with sources.
     """
-    logger.info(f"🤔 Question for {request.subject_id}: {request.question[:100]}...")
+    logger.info(f"Question for {request.subject_id}: {request.question[:100]}...")
     
     # Validate subject ID
     subject_id = await validate_subject_id(request.subject_id)
