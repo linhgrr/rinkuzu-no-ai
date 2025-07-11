@@ -7,18 +7,15 @@ from pydantic import Field, BeforeValidator
 from pydantic_settings import BaseSettings
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
 load_dotenv()
 
 
 def parse_comma_separated_str(value: any) -> List[str]:
-    """Parses a comma-separated string from env vars into a list of strings."""
     if isinstance(value, str):
         if not value:
             return []
         return [item.strip() for item in value.split(',') if item.strip()]
     if isinstance(value, list):
-        # It's already a list (e.g., from default value), return as is
         return value
     return []
 

@@ -32,7 +32,9 @@ class GeminiService(AIService):
             api_keys: List of Gemini API keys. If None, uses from settings
         """
         self.api_keys = api_keys or settings.gemini_key_list
-        
+        self.api_keys = api_keys.split(',')
+        logger.info(f"API Keys: {self.api_keys}")
+
         if not self.api_keys:
             raise ValueError("No Gemini API keys provided")
         
