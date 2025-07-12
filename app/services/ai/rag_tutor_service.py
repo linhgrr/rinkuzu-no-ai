@@ -13,6 +13,9 @@ from app.services.vector.embedding_service import EmbeddingService
 from app.services.vector.faiss_vector_store import FAISSVectorStore
 from app.services.file_loaders.factory import FileLoaderFactory
 from app.core.config import settings
+from app.services.ai.document_indexer import DocumentIndexer
+from app.services.ai.context_builder import ContextBuilder
+from app.utils.collection_utils import get_subject_collection_name
 
 
 class RagTutorService:
@@ -51,9 +54,9 @@ class RagTutorService:
             reranker_top_k: Top documents after reranking
         """
         # Initialize services
-        self.ai_service = ai_service or GeminiService()
-        self.embedding_service = embedding_service or EmbeddingService()
-        self.vector_store = vector_store or FAISSVectorStore()
+        self.ai_service = ai_service
+        self.embedding_service = embedding_service
+        self.vector_store = vector_store 
 
         
         # Initialize file loader factory with AI service for image processing
@@ -69,6 +72,16 @@ class RagTutorService:
         
         # Collection name configuration
         self.collection_prefix = "subject"
+        
+        # Helper components adhering to SRP
+        self.document_indexer = DocumentIndexer(
+            vector_store=self.vector_store,
+            file_loader_factory=self.file_loader_factory,
+            chunk_size=self.chunk_size,
+            chunk_overlap=self.chunk_overlap,
+            collection_prefix=self.collection_prefix
+        )
+        self.context_builder = ContextBuilder(max_context_length=self.max_context_length)
         
         # Rin-chan personality prompt
         self.system_prompt = """
@@ -110,17 +123,6 @@ class RagTutorService:
         """        
         logger.info("🤖 Initialized RAG Tutor Service (Rin-chan)")
     
-    def _get_collection_name(self, subject_id: str) -> str:
-        """
-        Get collection name for a subject
-        
-        Args:
-            subject_id: Subject identifier
-            
-        Returns:
-            Collection name for the subject
-        """
-        return f"{self.collection_prefix}_{subject_id}"
     
     async def upload_document(
         self,
@@ -130,97 +132,68 @@ class RagTutorService:
         metadata: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        Upload and index a document for RAG retrieval
-        
-        Args:
-            file_content: Binary content of the file
-            filename: Original filename
-            subject_id: Subject/course identifier
-            metadata: Additional metadata
-            
-        Returns:
-            Processing result with statistics
+        Upload and index a document for RAG retrieval (delegated to DocumentIndexer)
         """
-        try:
-            logger.info(f"📚 Processing document: {filename} for subject: {subject_id}")
-            
-            # Load and chunk the document
-            loader = self.file_loader_factory.get_loader(
-                filename, 
-                chunk_size=self.chunk_size,
-                chunk_overlap=self.chunk_overlap
-            )
-            
-            import io
-            file_stream = io.BytesIO(file_content)
-            chunks = await loader.load(file_stream, filename)
-            
-            if not chunks:
-                return {
-                    "success": False,
-                    "error": "No content could be extracted from the document"
-                }
-            
-            logger.info(f"📄 Extracted {len(chunks)} chunks from {filename}")
-            
-            # Create vector documents 
-            vector_documents = []
-
-            for i, chunk in enumerate(chunks):
-                # Combine metadata
-                combined_metadata = {
-                    "subject_id": subject_id,
-                    "filename": filename,
-                    "chunk_index": i,
-                    "upload_time": str(uuid.uuid4())[:8]  # Simple timestamp
-                }
-                
-                if metadata:
-                    combined_metadata.update(metadata)
-                
-                combined_metadata.update(chunk.metadata)
-                
-                # Create vector document
-                vector_doc = VectorDocument(
-                    id=f"{subject_id}_{filename}_{i}_{combined_metadata['upload_time']}",
-                    content=chunk.content,
-                    metadata=combined_metadata
-                )
-                
-                vector_documents.append(vector_doc)
-
-            
-            # Store in vector database
-            collection_name = self._get_collection_name(subject_id)
-            success = await self.vector_store.add_documents(vector_documents, collection_name)
-            
-            if success:
-                logger.info(f"✅ Successfully indexed {len(vector_documents)} chunks for {filename}")
-                
-                return {
-                    "success": True,
-                    "message": f"Document {filename} processed and indexed successfully",
-                    "statistics": {
-                        "filename": filename,
-                        "subject_id": subject_id,
-                        "chunks_created": len(chunks),
-                        "chunks_indexed": len(vector_documents),
-                        "collection": collection_name
-                    }
-                }
-            else:
-                return {
-                    "success": False,
-                    "error": "Failed to store document in vector database"
-                }
-                
-        except Exception as e:
-            logger.error(f"❌ Failed to process document {filename}: {e}")
-            return {
-                "success": False,
-                "error": f"Document processing failed: {str(e)}"
-            }
+        return await self.document_indexer.index_document(
+            file_content=file_content,
+            filename=filename,
+            subject_id=subject_id,
+            metadata=metadata,
+        )
     
+    async def _search_documents(
+        self,
+        question: str,
+        subject_id: str,
+    ) -> List[SearchResult]:
+        """Search vector store and return filtered results by similarity."""
+        collection_name = get_subject_collection_name(subject_id, self.collection_prefix)
+        search_results = await self.vector_store.search(
+            query_text=question,
+            collection_name=collection_name,
+            top_k=self.retrieval_top_k,
+            filters={"subject_id": subject_id},
+        )
+        return [r for r in search_results if r.score >= self.min_similarity]
+
+    async def _select_relevant_chunks(
+        self,
+        question: str,
+        search_results: List[SearchResult],
+        use_reranking: bool,
+    ) -> List[Dict[str, Any]]:
+        """Return top chunks, optionally reranked."""
+        relevant_chunks: List[Dict[str, Any]] = []
+
+        if use_reranking and len(search_results) > 1:
+            doc_texts = [r.document.content for r in search_results]
+            reranked = await self.embedding_service.rerank_documents(
+                query=question,
+                documents=doc_texts,
+                top_k=self.reranker_top_k,
+            )
+            for idx, score in reranked:
+                res = search_results[idx]
+                relevant_chunks.append(
+                    {
+                        "content": res.document.content,
+                        "metadata": res.document.metadata,
+                        "retrieval_score": res.score,
+                        "rerank_score": score,
+                    }
+                )
+        else:
+            for res in search_results[: self.reranker_top_k]:
+                relevant_chunks.append(
+                    {
+                        "content": res.document.content,
+                        "metadata": res.document.metadata,
+                        "retrieval_score": res.score,
+                        "rerank_score": None,
+                    }
+                )
+        return relevant_chunks
+
     async def ask_question(
         self,
         question: str,
@@ -249,23 +222,9 @@ class RagTutorService:
         try:
             logger.info(f"🤔 Processing question for subject {subject_id}: {question[:100]}...")
             
-            # Search for relevant documents
-            collection_name = self._get_collection_name(subject_id)
-            search_results = await self.vector_store.search(
-                query_text=question,
-                collection_name=collection_name,
-                top_k=self.retrieval_top_k,
-                filters={"subject_id": subject_id}
-            )
-
-            # Filter by similarity threshold
-            search_results = [r for r in search_results if r.score >= self.min_similarity]
-            logger.info(f"📏 Filtered search results by min_similarity={self.min_similarity}, remaining: {len(search_results)}")
+            search_results = await self._search_documents(question, subject_id)
 
             if not search_results or force_fallback:
-                # No relevant documents found → use fallback prompt
-                logger.info(f"📚 No context found for subject {subject_id}, using Gemini fallback")
-
                 messages = [ChatMessage(role="system", content=self.fallback_system_prompt)]
 
                 if chat_history:
@@ -308,39 +267,13 @@ class RagTutorService:
             
             logger.info(f"🔍 Found {len(search_results)} relevant documents")
             
-            # Rerank documents if enabled
-            relevant_chunks = []
-            if use_reranking and len(search_results) > 1:
-                # Extract document texts for reranking
-                doc_texts = [result.document.content for result in search_results]
-                
-                # Rerank documents
-                reranked_indices = await self.embedding_service.rerank_documents(
-                    query=question,
-                    documents=doc_texts,
-                    top_k=self.reranker_top_k
-                )
-                
-                # Get top reranked documents
-                for idx, score in reranked_indices:
-                    result = search_results[idx]
-                    relevant_chunks.append({
-                        "content": result.document.content,
-                        "metadata": result.document.metadata,
-                        "retrieval_score": result.score,
-                        "rerank_score": score
-                    })
-                    
-                logger.info(f"🔄 Reranked to top {len(relevant_chunks)} documents")
-            else:
-                # Use top search results without reranking
-                for result in search_results[:self.reranker_top_k]:
-                    relevant_chunks.append({
-                        "content": result.document.content,
-                        "metadata": result.document.metadata,
-                        "retrieval_score": result.score,
-                        "rerank_score": None
-                    })
+            relevant_chunks = await self._select_relevant_chunks(
+                question, search_results, use_reranking
+            )
+
+            logger.info(
+                f"🔄 Selected {len(relevant_chunks)} chunks (rerank={'on' if use_reranking else 'off'})"
+            )
             
             # Build context from relevant chunks
             context = self._build_context(relevant_chunks)
@@ -405,7 +338,7 @@ class RagTutorService:
             Statistics dictionary
         """
         try:
-            collection_name = self._get_collection_name(subject_id)
+            collection_name = get_subject_collection_name(subject_id, self.collection_prefix)
             stats = await self.vector_store.get_collection_stats(collection_name)
             
             # Add additional statistics
@@ -432,7 +365,7 @@ class RagTutorService:
             True if successful
         """
         try:
-            collection_name = self._get_collection_name(subject_id)
+            collection_name = get_subject_collection_name(subject_id, self.collection_prefix)
             return self.vector_store.delete_collection(collection_name)
             
         except Exception as e:
@@ -440,34 +373,8 @@ class RagTutorService:
             return False
     
     def _build_context(self, relevant_chunks: List[Dict[str, Any]]) -> str:
-        """
-        Build context string from relevant document chunks
-        
-        Args:
-            relevant_chunks: List of relevant document chunks with metadata
-            
-        Returns:
-            Formatted context string
-        """
-        context_parts = []
-        total_length = 0
-        
-        for i, chunk in enumerate(relevant_chunks, 1):
-            content = chunk["content"]
-            metadata = chunk["metadata"]
-            
-            # Check if adding this chunk would exceed max context length
-            if total_length + len(content) > self.max_context_length:
-                break
-            
-            # Format chunk with source info
-            source_info = f"[Nguồn: {metadata.get('filename', 'Unknown')}]"
-            chunk_text = f"{source_info}\n{content}\n"
-            
-            context_parts.append(chunk_text)
-            total_length += len(chunk_text)
-        
-        return "\n---\n".join(context_parts)
+        """Delegate to ContextBuilder to build context string."""
+        return self.context_builder.build(relevant_chunks)
     
     async def get_service_health(self) -> Dict[str, Any]:
         """
