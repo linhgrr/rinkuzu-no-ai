@@ -35,7 +35,8 @@ class RagTutorService:
         chunk_size: int = 1000,
         chunk_overlap: int = 100,
         max_retrieval_docs: int = 10,
-        reranker_top_k: int = 5 
+        reranker_top_k: int = 5,
+        min_similarity: float = 0.25  
     ):
         """
         Initialize RAG Tutor Service
@@ -64,32 +65,62 @@ class RagTutorService:
         self.max_context_length = 4000  # Maximum context for AI
         self.retrieval_top_k = max_retrieval_docs
         self.reranker_top_k = reranker_top_k
+        self.min_similarity = min_similarity  # store threshold
+        
+        # Collection name configuration
+        self.collection_prefix = "subject"
         
         # Rin-chan personality prompt
         self.system_prompt = """
-Bạn là Rin-chan, một trợ lý AI dễ thương và thông minh chuyên giúp học sinh hiểu bài học.
+    Bạn là Rin-chan, một trợ lý AI dễ thương và thông minh chuyên giúp học sinh hiểu bài học.
 
-TÍNH CÁCH CỦA RIN-CHAN:
-- Dễ thương, thân thiện nhưng nghiêm túc với việc học
-- Luôn khuyến khích và động viên học sinh
-- Giải thích một cách đơn giản, dễ hiểu
-- Sử dụng ví dụ thực tế để minh họa
-- Kiên nhẫn và sẵn sàng giải thích lại nhiều lần
+    TÍNH CÁCH CỦA RIN-CHAN:
+    - Dễ thương, thân thiện nhưng nghiêm túc với việc học
+    - Luôn khuyến khích và động viên học sinh
+    - Giải thích một cách đơn giản, dễ hiểu
+    - Sử dụng ví dụ thực tế để minh họa
+    - Kiên nhẫn và sẵn sàng giải thích lại nhiều lần
 
-NHIỆM VỤ:
-- Trả lời câu hỏi dựa trên tài liệu đã được cung cấp
-- Giải thích khái niệm một cách rõ ràng và chi tiết
-- Đưa ra ví dụ minh họa khi cần thiết
-- Hướng dẫn học sinh tự tìm hiểu thêm
+    NHIỆM VỤ:
+    - Trả lời câu hỏi dựa trên tài liệu đã được cung cấp
+    - Giải thích khái niệm một cách rõ ràng và chi tiết
+    - Đưa ra ví dụ minh họa khi cần thiết
+    - Hướng dẫn học sinh tự tìm hiểu thêm
 
-QUY TẮC:
-- Chỉ trả lời dựa trên thông tin trong tài liệu được cung cấp
-- Nếu không có thông tin, hãy thành thật nói rằng bạn không biết
-- Luôn khuyến khích học sinh đặt thêm câu hỏi
-- Sử dụng tiếng Việt một cách tự nhiên và thân thiện
-"""
+    QUY TẮC:
+    - Chỉ trả lời dựa trên thông tin trong tài liệu được cung cấp
+    - Nếu không có thông tin, hãy thành thật nói rằng bạn không biết
+    - Luôn khuyến khích học sinh đặt thêm câu hỏi
+    - Sử dụng tiếng Việt một cách tự nhiên và thân thiện
+    """
         
+        self.fallback_system_prompt = """
+    Bạn là Rin-chan, một trợ lý AI thông minh và thân thiện. 
+    Bạn vừa báo rằng không tìm thấy thông tin trong tài liệu môn học.
+    Bây giờ hãy trả lời câu hỏi bằng kiến thức vốn có của bạn.
+
+    Quy tắc trả lời:
+    1. Luôn thừa nhận rằng thông tin này không có trong tài liệu môn học mà bạn biết
+    2. Trả lời bằng kiến thức chung một cách chi tiết và hữu ích
+    3. Giữ tone thân thiện, nhiệt tình như Rin-chan
+    4. Sử dụng emoji phù hợp để tạo cảm giác gần gũi
+
+    Ví dụ cách bắt đầu câu trả lời:
+    "Mặc dù Rin-chan không tìm thấy thông tin này trong tài liệu môn học này mà Rin-chan có, nhưng Rin-chan có thể giải thích dựa trên kiến thức chung..."
+        """        
         logger.info("🤖 Initialized RAG Tutor Service (Rin-chan)")
+    
+    def _get_collection_name(self, subject_id: str) -> str:
+        """
+        Get collection name for a subject
+        
+        Args:
+            subject_id: Subject identifier
+            
+        Returns:
+            Collection name for the subject
+        """
+        return f"{self.collection_prefix}_{subject_id}"
     
     async def upload_document(
         self,
@@ -149,7 +180,7 @@ QUY TẮC:
                 
                 combined_metadata.update(chunk.metadata)
                 
-                # Create vector document (without embedding)
+                # Create vector document
                 vector_doc = VectorDocument(
                     id=f"{subject_id}_{filename}_{i}_{combined_metadata['upload_time']}",
                     content=chunk.content,
@@ -160,7 +191,7 @@ QUY TẮC:
 
             
             # Store in vector database
-            collection_name = f"subject_{subject_id}"
+            collection_name = self._get_collection_name(subject_id)
             success = await self.vector_store.add_documents(vector_documents, collection_name)
             
             if success:
@@ -219,22 +250,23 @@ QUY TẮC:
             logger.info(f"🤔 Processing question for subject {subject_id}: {question[:100]}...")
             
             # Search for relevant documents
-            collection_name = f"subject_{subject_id}"
+            collection_name = self._get_collection_name(subject_id)
             search_results = await self.vector_store.search(
                 query_text=question,
                 collection_name=collection_name,
                 top_k=self.retrieval_top_k,
                 filters={"subject_id": subject_id}
             )
-            
+
+            # Filter by similarity threshold
+            search_results = [r for r in search_results if r.score >= self.min_similarity]
+            logger.info(f"📏 Filtered search results by min_similarity={self.min_similarity}, remaining: {len(search_results)}")
+
             if not search_results or force_fallback:
                 # No relevant documents found → use fallback prompt
                 logger.info(f"📚 No context found for subject {subject_id}, using Gemini fallback")
 
-                # Build system fallback prompt
-                fallback_prompt = f"{getattr(self.ai_service, 'fallback_system_prompt', '')}\n\nCâu hỏi thuộc môn: {subject_id}"
-
-                messages = [ChatMessage(role="system", content=fallback_prompt)]
+                messages = [ChatMessage(role="system", content=self.fallback_system_prompt)]
 
                 if chat_history:
                     messages.extend(chat_history)
@@ -251,7 +283,6 @@ QUY TẮC:
                     messages=messages,
                     images=images if images else None,
                     temperature=0.7,
-                    model_name=getattr(self.ai_service, "fallback_model", None)
                 )
 
                 if fallback_response.success:
@@ -313,7 +344,6 @@ QUY TẮC:
             
             # Build context from relevant chunks
             context = self._build_context(relevant_chunks)
-            
             # Create chat messages with context
             messages = [
                 ChatMessage(role="system", content=self.system_prompt),
@@ -375,7 +405,7 @@ QUY TẮC:
             Statistics dictionary
         """
         try:
-            collection_name = f"subject_{subject_id}"
+            collection_name = self._get_collection_name(subject_id)
             stats = await self.vector_store.get_collection_stats(collection_name)
             
             # Add additional statistics
@@ -402,7 +432,7 @@ QUY TẮC:
             True if successful
         """
         try:
-            collection_name = f"subject_{subject_id}"
+            collection_name = self._get_collection_name(subject_id)
             return self.vector_store.delete_collection(collection_name)
             
         except Exception as e:

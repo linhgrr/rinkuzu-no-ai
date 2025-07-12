@@ -2,9 +2,12 @@
 Gemini AI Service Implementation
 """
 import base64
+import mimetypes
 from typing import List, Optional, Union, Dict, Any
-from google.generativeai import GenerativeModel, configure
+from google.generativeai import GenerativeModel
 from google.generativeai.types import HarmCategory, HarmBlockThreshold
+from google.api_core.client_options import ClientOptions
+import httpx
 import google.generativeai as genai
 from loguru import logger
 
@@ -29,22 +32,9 @@ class GeminiService(AIService):
         Initialize Gemini service
         
         Args:
-            api_keys: List of Gemini API keys. If None, uses from settings
+            api_keys: List of Gemini API keys.
         """
-        # Normalize API keys to list
-        if api_keys is None:
-            self.api_keys = settings.gemini_keys.split(',') if settings.gemini_keys else []
-        elif isinstance(api_keys, str):
-            self.api_keys = [k.strip() for k in api_keys.split(',') if k.strip()]
-        else:
-            # Assume already list-like
-            self.api_keys = api_keys
-
-        logger.info(f"API Keys: {self.api_keys}")
-
-        if not self.api_keys:
-            raise ValueError("No Gemini API keys provided")
-        
+        self.api_keys = api_keys        
         # Initialize key rotation manager
         self.key_manager = KeyRotationManager(
             keys=self.api_keys,
@@ -54,8 +44,8 @@ class GeminiService(AIService):
         
         # Model configuration
         self.model_name = model_name
-        self.fallback_model = "gemini-2.0-flash"
-        
+        self.fallback_model = "gemini-2.5-flash"
+
         # Safety settings
         self.safety_settings = {
             HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
@@ -63,22 +53,6 @@ class GeminiService(AIService):
             HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
             HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE,
         }
-        
-        # Rin-chan fallback system prompt – used when RAG cannot provide context
-        self.fallback_system_prompt = """
-Bạn là Rin-chan, một trợ lý AI thông minh và thân thiện. 
-Bạn vừa báo rằng không tìm thấy thông tin trong tài liệu môn học.
-Bây giờ hãy trả lời câu hỏi bằng kiến thức vốn có của bạn.
-
-Quy tắc trả lời:
-1. Luôn thừa nhận rằng thông tin này không có trong tài liệu môn học mà bạn biết
-2. Trả lời bằng kiến thức chung một cách chi tiết và hữu ích
-3. Giữ tone thân thiện, nhiệt tình như Rin-chan
-4. Sử dụng emoji phù hợp để tạo cảm giác gần gũi
-
-Ví dụ cách bắt đầu câu trả lời:
-"Mặc dù Rin-chan không tìm thấy thông tin này trong tài liệu môn học này mà Rin-chan có, nhưng Rin-chan có thể giải thích dựa trên kiến thức chung..."
-"""
         
         logger.info(f"Initialized GeminiService with {len(self.api_keys)} API keys")
     
@@ -157,10 +131,9 @@ Ví dụ cách bắt đầu câu trả lời:
             for img in images:
                 # Convert bytes → base64 if necessary
                 if isinstance(img, (bytes, bytearray)):
-                    import base64 as _b64
-                    img = _b64.b64encode(img).decode("utf-8")
+                    img = base64.b64encode(img).decode("utf-8")
 
-                img_part = self._base64_to_image_part(img) if isinstance(img, str) else None
+                img_part = await self._base64_to_image_part(img) if isinstance(img, str) else None
                 if img_part:
                     content_parts.append(img_part)
 
@@ -256,13 +229,12 @@ Ví dụ cách bắt đầu câu trả lời:
                 )
             
             try:
-                # Configure API key
-                configure(api_key=api_key)
-                
-                # Create model
+                genai.configure(api_key=api_key)
+
+                # Khởi tạo model mà không có client_options
                 model = GenerativeModel(
                     model_name=model_name,
-                    safety_settings=self.safety_settings
+                    safety_settings=self.safety_settings,
                 )
                 
                 # Prepare content
@@ -369,16 +341,16 @@ Ví dụ cách bắt đầu câu trả lời:
     # ------------------------------------------------------------------
     # Image helpers & fallback response
 
-    def _base64_to_image_part(self, base64_data: str) -> Optional[Dict[str, Any]]:
+    async def _base64_to_image_part(self, base64_data: str) -> Optional[Dict[str, Any]]:
         """Convert base64 string or URL to Gemini inline image part."""
         try:
             if base64_data.startswith("http://") or base64_data.startswith("https://"):
-                import requests, mimetypes
-                resp = requests.get(base64_data, timeout=10)
-                if resp.status_code != 200:
-                    raise ValueError(f"HTTP {resp.status_code}")
-                mime_type = resp.headers.get("Content-Type") or mimetypes.guess_type(base64_data)[0] or "image/jpeg"
-                image_bytes = resp.content
+                # Use async HTTP client instead of blocking requests
+                async with httpx.AsyncClient() as client:
+                    resp = await client.get(base64_data, timeout=10)
+                    resp.raise_for_status()  # Automatically raise error for non-2xx status codes
+                    mime_type = resp.headers.get("Content-Type") or mimetypes.guess_type(base64_data)[0] or "image/jpeg"
+                    image_bytes = resp.content
             else:
                 # Remove data URL prefix if present
                 if base64_data.startswith("data:image/"):
@@ -395,48 +367,3 @@ Ví dụ cách bắt đầu câu trả lời:
         except Exception as e:
             logger.error(f"Failed to convert image data: {e}")
             return None
-
-    async def generate_fallback_response(
-        self,
-        question: str,
-        subject_id: str,
-        question_image: Optional[str] = None,
-        option_images: Optional[List[Optional[str]]] = None,
-        chat_history: Optional[List[ChatMessage]] = None,
-        model_name: Optional[str] = None,
-        **kwargs,
-    ) -> AIResponse:
-        """Backward-compatibility wrapper: delegates to chat()."""
-
-        # Build system prompt with subject context
-        system_msg = f"{self.fallback_system_prompt}\n\nCâu hỏi thuộc môn: {subject_id}"
-
-        messages = [ChatMessage(role="system", content=system_msg)]
-
-        if chat_history:
-            messages.extend(chat_history)
-
-        messages.append(ChatMessage(role="user", content=question))
-
-        images: List[str] = []
-        if question_image:
-            images.append(question_image)
-        if option_images:
-            images.extend([img for img in option_images if img])
-
-        ai_resp = await self.chat(
-            messages=messages,
-            images=images if images else None,
-            model_name=model_name or self.fallback_model,
-            temperature=kwargs.get("temperature", 0.7),
-        )
-
-        # Add fallback metadata
-        ai_resp.metadata = ai_resp.metadata or {}
-        ai_resp.metadata.update({
-            "source": "gemini_fallback",
-            "subject_id": subject_id,
-            "has_images": bool(images),
-        })
-
-        return ai_resp

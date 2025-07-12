@@ -5,6 +5,7 @@ from typing import List
 from fastapi import APIRouter, Depends, UploadFile, Form, HTTPException, status
 from fastapi.responses import JSONResponse
 from loguru import logger
+from app.core.interfaces.ai_service import ChatMessage
 
 from app.models.requests import AskQuestionRequest
 from app.models.responses import (
@@ -111,7 +112,6 @@ async def ask_question(
     subject_id = await validate_subject_id(request.subject_id)
     
     # Convert chat history to proper format
-    from app.core.interfaces.ai_service import ChatMessage
     chat_history = None
     if request.chat_history:
         chat_history = [

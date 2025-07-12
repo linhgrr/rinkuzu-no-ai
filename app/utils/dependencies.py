@@ -37,14 +37,15 @@ def get_vector_store() -> FAISSVectorStore:
 @lru_cache()
 def get_gemini_service() -> GeminiService:
     """Get singleton Gemini AI service"""
-    if not settings.gemini_keys:
+    if not settings.gemini_keys or len(settings.gemini_keys) == 0:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="AI service unavailable: No API keys configured"
         )
     
+    api_keys = settings.gemini_keys.split(',') if settings.gemini_keys else []
     return GeminiService(
-        api_keys=settings.gemini_keys,
+        api_keys=api_keys,
         model_name="gemini-2.0-flash",
     )
 

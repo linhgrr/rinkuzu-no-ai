@@ -264,15 +264,15 @@ class FAISSVectorStore(VectorStore):
                 # Convert to similarity score (higher = more similar)
                 similarity_score = 1.0 / (1.0 + distance)
                 
-                # Apply filters if provided
-                if filters:
-                    match = True
-                    for key, value in filters.items():
-                        if key not in doc.metadata or doc.metadata[key] != value:
-                            match = False
-                            break
-                    if not match:
-                        continue
+                # # Apply filters if provided
+                # if filters:
+                #     match = True
+                #     for key, value in filters.items():
+                #         if key not in doc.metadata or doc.metadata[key] != value:
+                #             match = False
+                #             break
+                #     if not match:
+                #         continue
                 
                 vector_doc = VectorDocument(
                     id=doc.metadata.get("source_doc_id", str(uuid.uuid4())),
