@@ -1,0 +1,2 @@
+-  đọc hiểu cơ chế đang được sử dụng trong faiss_vector_store
+- tìm xem còn chỗ nào chưa oke khôngkhông

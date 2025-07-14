@@ -40,13 +40,11 @@ class Settings(BaseSettings):
     vector_db_path: str = Field(default="./vector_db", env="VECTOR_DB_PATH")
     embedding_model: str = Field(default="Alibaba-NLP/gte-multilingual-base", env="EMBEDDING_MODEL")
     
-    # ✅ New: Concurrent Processing Configuration
     max_concurrent_embeddings: int = Field(default=3, env="MAX_CONCURRENT_EMBEDDINGS")
     embedding_timeout_seconds: int = Field(default=300, env="EMBEDDING_TIMEOUT_SECONDS")  # 5 minutes
     faiss_thread_pool_workers: int = Field(default=0, env="FAISS_THREAD_POOL_WORKERS")  # 0 = auto
     batch_size_documents: int = Field(default=10, env="BATCH_SIZE_DOCUMENTS")  # Process docs in batches
     
-    # ✅ New: Memory Management
     chunk_size: int = Field(default=1000, env="CHUNK_SIZE")
     chunk_overlap: int = Field(default=200, env="CHUNK_OVERLAP")
     max_chunks_per_document: int = Field(default=50, env="MAX_CHUNKS_PER_DOCUMENT")
@@ -54,9 +52,9 @@ class Settings(BaseSettings):
     # Models
     reranker_model: str = Field("Alibaba-NLP/gte-multilingual-reranker-base", env="RERANKER_MODEL")
     
-    # RAG settings
-    max_retrieval_docs: int = Field(10, env="MAX_RETRIEVAL_DOCS")
-    reranker_top_k: int = Field(5, env="RERANKER_TOP_K")
+    # RAG settings - Optimized for multiple choice questions
+    max_retrieval_docs: int = Field(20, env="MAX_RETRIEVAL_DOCS")  # Increased for better coverage
+    reranker_top_k: int = Field(8, env="RERANKER_TOP_K")  # Keep more relevant docs after reranking
     
     # File upload limits
     max_file_size: int = Field(50 * 1024 * 1024, env="MAX_FILE_SIZE")  # 50MB

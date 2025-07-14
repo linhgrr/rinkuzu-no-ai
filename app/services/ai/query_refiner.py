@@ -64,22 +64,21 @@ class QueryRefiner:
         self._cache_size = cache_size
         self._cache: Dict[int, str] = {}
 
-    async def refine(self, raw_question: str) -> str:  # noqa: D401
-        """Return a concise query string extracted from *raw_question*.
-
-        If the LLM call fails for any reason, the original question is returned to guarantee
-        that the pipeline continues to work.
-        """
-        cache_key = hash(raw_question)
+    async def refine(self, raw_question: str, chat_history: list = None) -> str:  # noqa: D401
+        """Return a concise query string extracted from *raw_question*, using chat history if provided."""
+        cache_key = hash((raw_question, str(chat_history)))
         if cache_key in self._cache:
             return self._cache[cache_key]
 
         messages = [
             ChatMessage(role="system", content=self.SYSTEM_PROMPT),
-            ChatMessage(role="user", content=raw_question),
         ]
+        if chat_history:
+            messages.extend(chat_history)
+        messages.append(ChatMessage(role="user", content=raw_question))
 
         try:
+            logger.info(f"Refine messages: {messages}")
             response = await self.ai_service.chat(messages, temperature=0.0)
             if response.success and response.content.strip():
                 refined = response.content.strip()

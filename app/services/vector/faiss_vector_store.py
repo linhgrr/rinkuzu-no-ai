@@ -308,7 +308,7 @@ class FAISSVectorStore(VectorStore):
         self,
         query_text: str,
         collection_name: Optional[str] = None,
-        top_k: int = 10,
+        top_k: int = 20,
         filters: Optional[Dict[str, Any]] = None
     ) -> List[SearchResult]:
         """Search for similar documents using FAISS similarity search"""

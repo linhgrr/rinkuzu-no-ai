@@ -38,9 +38,9 @@ class RagTutorService:
         vector_store: Optional[FAISSVectorStore] = None,
         chunk_size: int = 1000,
         chunk_overlap: int = 100,
-        max_retrieval_docs: int = 10,
-        reranker_top_k: int = 5,
-        min_similarity: float = 0.25  
+        max_retrieval_docs: int = 20,
+        reranker_top_k: int = 8,
+        min_similarity: float = 0.4  
     ):
         """
         Initialize RAG Tutor Service
@@ -63,18 +63,16 @@ class RagTutorService:
         # Initialize file loader factory with AI service for image processing
         self.file_loader_factory = FileLoaderFactory(ai_service=self.ai_service)
         
-        # RAG configuration
+        # RAG configuration - Optimized for MCQ with longer context
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
-        self.max_context_length = 4000  # Maximum context for AI
+        self.max_context_length = 6000  
         self.retrieval_top_k = max_retrieval_docs
         self.reranker_top_k = reranker_top_k
         self.min_similarity = min_similarity  # store threshold
         
-        # Collection name configuration
         self.collection_prefix = "subject"
         
-        # Helper components adhering to SRP
         self.document_indexer = DocumentIndexer(
             vector_store=self.vector_store,
             file_loader_factory=self.file_loader_factory,
@@ -87,56 +85,66 @@ class RagTutorService:
         # Query refiner for cleaner vector-search queries
         self.query_refiner = QueryRefiner(ai_service=self.ai_service)
         
-        # Rin-chan personality prompt
+        # Rin-chan personality prompt - Optimized for Multiple Choice Questions
         self.system_prompt = """
-Bạn là Rin-chan, một trợ lý AI dễ thương và thông minh chuyên giúp học sinh hiểu bài học.
+Bạn là Rin-chan, một trợ lý AI dễ thương và thông minh chuyên giúp học sinh với câu hỏi trắc nghiệm và bài học.
 
 TÍNH CÁCH CỦA RIN-CHAN:
 - Dễ thương, thân thiện nhưng nghiêm túc với việc học.
 - Luôn khuyến khích và động viên học sinh.
-- Giải thích một cách đơn giản, dễ hiểu, sử dụng ví dụ thực tế.
-- Kiên nhẫn và sẵn sàng giải thích lại nhiều lần.
+- Giải thích rõ ràng, logic cho câu hỏi trắc nghiệm.
+- Phân tích từng đáp án một cách chi tiết.
+- **CHÚ Ý**: Nếu đã có chat trước đây trong history chat rồi thì từ lần sau không cần chào lại học sinh.
 
-QUY TRÌNH TRẢ LỜI (RẤT QUAN TRỌNG):
+QUY TRÌNH TRẢ LỜI CÂU HỎI TRẮC NGHIỆM (RẤT QUAN TRỌNG):
 
 1.  **PHÂN TÍCH NGỮ CẢNH:**
-    - Đầu tiên, hãy đọc kỹ câu hỏi của học sinh và phần `NGỮ CẢNH TÀI LIỆU` được cung cấp.
-    - **Ưu tiên tuyệt đối:** Câu trả lời phải dựa trên `NGỮ CẢNH TÀI LIỆU` nếu nó liên quan trực tiếp đến câu hỏi.
+    - Đọc kỹ câu hỏi và các lựa chọn (A, B, C, D...).
+    - Đọc kỹ phần `NGỮ CẢNH TÀI LIỆU` được cung cấp. Đây là tài liệu mà bạn vừa nhận được từ cơ sở tri thức của mình.
+    - **Ưu tiên tuyệt đối:** Dựa trên `NGỮ CẢNH TÀI LIỆU` để trả lời.
 
-2.  **XỬ LÝ TÌNH HUỐNG:**
-    - **Nếu tài liệu CÓ liên quan:** Hãy tổng hợp thông tin từ tài liệu để trả lời câu hỏi.
-    - **Nếu tài liệu KHÔNG liên quan hoặc không đủ thông tin:**
-        a. **BẮT BUỘC:** Phải thông báo cho học sinh một cách thân thiện rằng tài liệu không chứa câu trả lời. Ví dụ: "Rin-chan đã xem kỹ các tài liệu môn học mà Rin-chan có rồi, nhưng không tìm thấy thông tin về [chủ đề câu hỏi] trong đó." hoặc một câu khác với ý nghĩa tương tự, sao cho giữ đúng tính cách của cậu"
-        b. **SAU ĐÓ:** Hãy sử dụng kiến thức chung của bạn để trả lời câu hỏi của học sinh một cách đầy đủ và chính xác nhất có thể. Đừng chỉ nói "tớ không biết". Mục tiêu là phải giúp học sinh hiểu bài.
-        c. **CHÚ Ý:** Nội dung câu trả lời bắt buộc phải đầy đủ (nếu có thể) cho tất cả ý trong câu hỏi của học sinh
-3.  **CÁC QUY TẮC KHÁC:**
-    - Luôn khuyến khích học sinh đặt thêm câu hỏi.
-    - Sử dụng tiếng Việt một cách tự nhiên và thân thiện.
+2.  **XỬ LÝ CÂU HỎI TRẮC NGHIỆM:**
+    - **Nếu tài liệu CÓ thông tin liên quan:**
+        a. Phân tích từng đáp án dựa trên tài liệu
+        b. Giải thích tại sao đáp án đúng là đúng
+        c. Giải thích tại sao các đáp án sai là sai
+        d. Đưa ra đáp án cuối cùng rõ ràng
+    
+    - **Nếu tài liệu KHÔNG đủ thông tin:**
+        a. Thông báo thân thiện: "Trong tài liệu môn học, Rin-chan không tìm thấy đủ thông tin về [chủ đề]. Nhưng dựa trên kiến thức tổng quát..."
+        b. Phân tích câu hỏi bằng kiến thức bạn có
+        c. Vẫn phải đưa ra đáp án và giải thích đầy đủ
+
+3.  **ĐỊNH DẠNG TRẢ LỜI:**
+    - Luôn kết thúc bằng: "**Đáp án: [X]**" (với X là A, B, C, D...)
+    - Giải thích ngắn gọn nhưng đầy đủ
+    - Khuyến khích hỏi thêm nếu chưa hiểu
 """
         
         self.fallback_system_prompt = """
-Bạn là Rin-chan, một trợ lý AI dễ thương và thông minh, chuyên giúp đỡ học sinh.
+Bạn là Rin-chan, một trợ lý AI dễ thương và thông minh chuyên giúp học sinh với câu hỏi trắc nghiệm.
 
 BỐI CẢNH QUAN TRỌNG:
 Hệ thống tìm kiếm đã không tìm thấy **bất kỳ tài liệu nào** trong môn học có thể trả lời cho câu hỏi này. Nhiệm vụ của bạn là phải trả lời câu hỏi bằng kiến thức chung của mình.
 
 NHIỆM VỤ CỦA BẠN:
 
-1.  **MỞ ĐẦU (BẮT BUỘC):**
-    - Bắt đầu câu trả lời bằng cách thông báo một cách thân thiện rằng bạn không tìm thấy thông tin trong kho tài liệu của môn học.
-    - Hãy sáng tạo và tự nhiên, không cần lặp lại chính xác một câu. Sử dụng emoji để thêm phần gần gũi.
+1.  **MỞ ĐẦU (BẮT BUỘC cho câu hỏi gần nhất là câu hỏi trắc nghiệm):**
+    - Thông báo thân thiện về việc không tìm thấy tài liệu cụ thể
+    - **Gợi ý:** "Rin-chan không tìm thấy tài liệu cụ thể về câu hỏi này trong môn học 📚, nhưng dựa trên kiến thức tổng quát, mình sẽ phân tích từng đáp án cho bạn nhé! ✨"
 
-    - **Gợi ý cách mở đầu:**
-        - "Rin-chan đã tìm kỹ trong kho tài liệu rồi mà không thấy gì hết trơn 📂... Nhưng không sao, để tớ giúp bạn bằng kiến thức của mình nhé!"
-        - "Ối, có vẻ như tài liệu môn này chưa có thông tin về chủ đề này rồi. Đừng lo, Rin-chan sẽ giải thích cho bạn ngay đây! ✨"
-        - "Tiếc quá, Rin-chan không tìm thấy tài liệu liên quan trong môn học. Nhưng bạn hỏi đúng người rồi đó, để tớ giải đáp cho bạn nha! 😊"
+2.  **PHÂN TÍCH TRẮC NGHIỆM:**
+    - Đọc kỹ câu hỏi và tất cả các lựa chọn (A, B, C, D...)
+    - Phân tích từng đáp án một cách logic và chi tiết
+    - Giải thích tại sao đáp án đúng là đúng
+    - Giải thích tại sao các đáp án khác là sai
+    - **BẮT BUỘC:** Kết thúc bằng "**Đáp án: [X]**"
 
-2.  **NỘI DUNG CHÍNH:**
-    - Ngay sau phần mở đầu, hãy trả lời câu hỏi của học sinh một cách chi tiết, rõ ràng và dễ hiểu.
-    - Giữ vững tính cách thân thiện, nhiệt tình, và giải thích như một người bạn của Rin-chan.
-
-3.  **KẾT THÚC:**
-    - Luôn kết thúc bằng một lời động viên và khuyến khích học sinh hỏi thêm nếu vẫn còn thắc mắc.
+3.  **QUY TẮC QUAN TRỌNG:**
+    - Luôn đưa ra một đáp án cụ thể, không được nói "không chắc chắn"
+    - Giải thích ngắn gọn nhưng logic
+    - Khuyến khích hỏi thêm nếu chưa hiểu
+    - Duy trì tính cách dễ thương của Rin-chan
 """     
         logger.info("🤖 Initialized RAG Tutor Service (Rin-chan)")
     
@@ -163,7 +171,7 @@ NHIỆM VỤ CỦA BẠN:
         question: str,
         subject_id: str,
     ) -> List[SearchResult]:
-        """Search vector store and return filtered results by similarity."""
+        """Search vector store and return filtered results by similarity - optimized for MCQ."""
         collection_name = get_subject_collection_name(subject_id, self.collection_prefix)
         search_results = await self.vector_store.search(
             query_text=question,
@@ -171,7 +179,10 @@ NHIỆM VỤ CỦA BẠN:
             top_k=self.retrieval_top_k,
             filters={"subject_id": subject_id},
         )
-        return [r for r in search_results if r.score >= self.min_similarity]
+        # Higher similarity threshold for better precision in multiple choice context
+        filtered_results = [r for r in search_results if r.score >= self.min_similarity]
+        logger.debug(f"Filtered {len(search_results)} -> {len(filtered_results)} documents (threshold: {self.min_similarity})")
+        return filtered_results
 
     async def _select_relevant_chunks(
         self,
@@ -240,13 +251,15 @@ NHIỆM VỤ CỦA BẠN:
             logger.info(f"🤔 Processing question for subject {subject_id}: {question[:100]}...")
 
             # 1. Refine the raw user question to obtain concise search query
-            refined_query = await self.query_refiner.refine(question)
+            refined_query = await self.query_refiner.refine(question, chat_history)
             logger.debug("Refined query: %s", refined_query)
 
             # 2. Search documents with the refined query (not the full noisy question)
             search_results = await self._search_documents(refined_query, subject_id)
 
+            # Improved fallback strategy for MCQ context
             if not search_results or force_fallback:
+                logger.warning(f"No relevant documents found for subject {subject_id}, using fallback mode")
                 messages = [ChatMessage(role="system", content=self.fallback_system_prompt)]
 
                 if chat_history:
@@ -263,7 +276,7 @@ NHIỆM VỤ CỦA BẠN:
                 fallback_response = await self.ai_service.chat(
                     messages=messages,
                     images=images if images else None,
-                    temperature=0.7,
+                    temperature=0.3,  # Lower temperature for MCQ consistency
                 )
 
                 if fallback_response.success:
@@ -272,18 +285,20 @@ NHIỆM VỤ CỦA BẠN:
                         "context_found": False,
                         "subject_id": subject_id,
                         "search_results_count": 0,
-                        "fallback_used": True
+                        "fallback_used": True,
+                        "retrieval_strategy": "pure_llm_fallback"
                     })
                     return fallback_response
                 else:
                     return AIResponse(
                         success=False,
-                        error="Không tìm thấy tài liệu và không thể tạo phản hồi thay thế",
+                        error="Không tìm thấy tài liệu phù hợp và không thể tạo phản hồi từ kiến thức tổng quát",
                         metadata={
                             "context_found": False,
                             "subject_id": subject_id,
                             "search_results_count": 0,
-                            "fallback_failed": True
+                            "fallback_failed": True,
+                            "error_type": "complete_retrieval_failure"
                         }
                     )
             
@@ -320,11 +335,11 @@ NHIỆM VỤ CỦA BẠN:
                 images.extend([img for img in option_images if img])
 
             logger.info(f"🔍 Sending messages to AI service: {messages}")
-            # Get AI response
+            # Get AI response with optimized temperature for MCQ consistency
             ai_response = await self.ai_service.chat(
                 messages,
                 images=images if images else None,
-                temperature=0.7
+                temperature=0.3  # Lower temperature for more consistent MCQ responses
             )
             
             if ai_response.success:
@@ -337,7 +352,13 @@ NHIỆM VỤ CỦA BẠN:
                     "search_results_count": len(search_results),
                     "reranked_chunks": len(relevant_chunks),
                     "context_sources": [chunk["metadata"].get("filename") for chunk in relevant_chunks],
-                    "use_reranking": use_reranking
+                    "use_reranking": use_reranking,
+                    "retrieval_strategy": "rag_with_context",
+                    "similarity_threshold": self.min_similarity,
+                    "avg_retrieval_score": sum(chunk["retrieval_score"] for chunk in relevant_chunks) / len(relevant_chunks) if relevant_chunks else 0,
+                    "avg_rerank_score": sum(chunk["rerank_score"] or 0 for chunk in relevant_chunks) / len(relevant_chunks) if relevant_chunks else None,
+                    "context_length": len(context),
+                    "pipeline_optimized_for": "multiple_choice_questions"
                 })
                 
                 logger.info("✅ Successfully generated RAG response")
@@ -397,8 +418,39 @@ NHIỆM VỤ CỦA BẠN:
             return False
     
     def _build_context(self, relevant_chunks: List[Dict[str, Any]]) -> str:
-        """Delegate to ContextBuilder to build context string."""
-        return self.context_builder.build(relevant_chunks)
+        """Build context string from relevant chunks - optimized for MCQ."""
+        if not relevant_chunks:
+            return ""
+        
+        # Sort chunks by rerank score if available, otherwise by retrieval score
+        sorted_chunks = sorted(
+            relevant_chunks, 
+            key=lambda x: x.get("rerank_score") or x.get("retrieval_score", 0), 
+            reverse=True
+        )
+        
+        context_parts = []
+        current_length = 0
+        
+        for i, chunk in enumerate(sorted_chunks):
+            chunk_text = chunk["content"]
+            metadata = chunk.get("metadata", {})
+            filename = metadata.get("filename", "Unknown")
+            
+            # Add source info for better context
+            chunk_with_source = f"[Nguồn: {filename}]\n{chunk_text}"
+            
+            # Check if adding this chunk would exceed max context length
+            if current_length + len(chunk_with_source) > self.max_context_length:
+                if i == 0:  # Always include at least one chunk
+                    chunk_with_source = chunk_with_source[:self.max_context_length - 100] + "..."
+                    context_parts.append(chunk_with_source)
+                break
+            
+            context_parts.append(chunk_with_source)
+            current_length += len(chunk_with_source)
+        
+        return "\n\n---\n\n".join(context_parts)
     
     async def get_service_health(self) -> Dict[str, Any]:
         """

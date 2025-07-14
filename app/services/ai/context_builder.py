@@ -14,22 +14,36 @@ class ContextBuilder:
         self.max_context_length = max_context_length
 
     def build(self, relevant_chunks: List[Dict[str, Any]]) -> str:
-        """Combine chunks into a single context string within length limit."""
+        """Combine chunks into a single context string within length limit, optimized for MCQ."""
+        if not relevant_chunks:
+            return ""
+
+        # Sort chunks by rerank_score (nếu có), nếu không thì theo retrieval_score
+        sorted_chunks = sorted(
+            relevant_chunks,
+            key=lambda x: x.get("rerank_score") if x.get("rerank_score") is not None else x.get("retrieval_score", 0),
+            reverse=True
+        )
+
         context_parts: List[str] = []
-        total_length = 0
+        current_length = 0
 
-        for chunk in relevant_chunks:
+        for i, chunk in enumerate(sorted_chunks):
             content = chunk["content"]
-            metadata = chunk["metadata"]
-
-            # Stop if we would exceed the maximum context length
-            if total_length + len(content) > self.max_context_length:
+            metadata = chunk.get("metadata", {})
+            filename = metadata.get("filename", "Unknown")
+            
+            # Add source info for better context
+            chunk_with_source = f"[Nguồn: {filename}]\n{content}"
+            
+            # Check if adding this chunk would exceed max context length
+            if current_length + len(chunk_with_source) > self.max_context_length:
+                if i == 0:  # Always include at least one chunk
+                    chunk_with_source = chunk_with_source[:self.max_context_length - 100] + "..."
+                    context_parts.append(chunk_with_source)
                 break
-
-            source_info = f"[Nguồn: {metadata.get('filename', 'Unknown')}]"
-            chunk_text = f"{source_info}\n{content}\n"
-
-            context_parts.append(chunk_text)
-            total_length += len(chunk_text)
-
-        return "\n---\n".join(context_parts) 
+            
+            context_parts.append(chunk_with_source)
+            current_length += len(chunk_with_source)
+        
+        return "\n\n---\n\n".join(context_parts) 

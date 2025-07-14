@@ -52,7 +52,7 @@ def get_gemini_service() -> GeminiService:
 
 @lru_cache()
 def get_rag_tutor_service() -> RagTutorService:
-    """Get singleton RAG tutor service"""
+    """Get singleton RAG tutor service """
     return RagTutorService(
         ai_service=get_gemini_service(),
         vector_store=get_vector_store(),
@@ -60,7 +60,8 @@ def get_rag_tutor_service() -> RagTutorService:
         chunk_size=settings.chunk_size,
         chunk_overlap=settings.chunk_overlap,
         max_retrieval_docs=settings.max_retrieval_docs,
-        reranker_top_k=settings.reranker_top_k
+        reranker_top_k=settings.reranker_top_k,
+        min_similarity=0.4 
     )
 
 
