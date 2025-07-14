@@ -30,32 +30,34 @@ class QueryRefiner:
     """Use LLM to produce a cleaner search query from a potentially noisy prompt."""
 
     SYSTEM_PROMPT: str = (
-    "Bạn là một chuyên gia trong việc tinh chỉnh câu hỏi của người dùng cho hệ thống tìm kiếm ngữ nghĩa (semantic search). "
-    "Nhiệm vụ của bạn là diễn giải lại câu hỏi thô của người dùng thành một câu truy vấn ngắn gọn, rõ ràng và trực tiếp, phù hợp để tìm kiếm trong cơ sở dữ liệu vector.\n\n"
-    "QUY TẮC:\n"
-    "1. Giữ lại ý định cốt lõi của câu hỏi.\n"
-    "2. Loại bỏ tất cả thông tin nhiễu: các tùy chọn trả lời (ví dụ: A, B, C, D), hướng dẫn (ví dụ: 'Hãy chọn câu trả lời đúng'), các câu chào hỏi, emoji, v.v.\n"
-    "3. KHÔNG được trả lời câu hỏi. Chỉ tinh chỉnh lại câu hỏi.\n"
-    "4. KHÔNG thêm bất kỳ lời giải thích hay đoạn văn giới thiệu nào. Chỉ trả về duy nhất câu truy vấn đã được tinh chỉnh.\n"
-    "5. Nếu câu hỏi đã đủ rõ ràng và ngắn gọn, hãy trả về y nguyên.\n"
-    "6. Giữ nguyên ngôn ngữ của câu hỏi gốc (ví dụ: nếu hỏi bằng tiếng Việt, câu truy vấn cũng phải bằng tiếng Việt).\n\n"
-    "VÍ DỤ:\n\n"
-    "Ví dụ 1:\n"
-    "Input: Giải thuật nào sau đây xem xét đến ước lượng tới nút đích? Options: A. Depth-first search B. Best-first search C. A* search D. Greedy best-first search\n"
-    "Output: Thuật toán nào xem xét ước lượng heuristic tới nút đích?\n\n"
-    "Ví dụ 2:\n"
-    "Input: RAG là gì?\n"
-    "Output: RAG là gì?\n\n"
-    "Ví dụ 3:\n"
-    "Input: ad ơi cho mình hỏi làm thế nào để tối ưu hóa mô hình ngôn ngữ lớn ạ? cảm ơn ad nhiều 😘\n"
-    "Output: cách tối ưu hóa mô hình ngôn ngữ lớn"
+    "Bạn là một trình lọc truy vấn thông minh. Nhiệm vụ của bạn là nhận một câu hỏi thô từ người dùng – có thể chứa lựa chọn đáp án, ví dụ minh họa, hướng dẫn làm bài, định dạng trắc nghiệm, hoặc ký hiệu không liên quan – "
+    "và tạo ra một câu hỏi ngắn gọn, rõ ràng, khái quát và phù hợp để tìm kiếm thông tin có liên quan.\n\n"
+    "Chỉ giữ lại phần nội dung trọng tâm – điều mà người dùng thực sự muốn hỏi – dưới dạng một câu đơn rõ ràng. "
+    "Tránh giữ lại các lựa chọn đáp án (A., B., C., ...), tên cụ thể như G1, A, B, C nếu không cần thiết, hoặc bất kỳ chi tiết mang tính cá biệt hóa mà không giúp ích cho việc tìm tài liệu.\n\n"
+    "Ví dụ:\n"
+    "Đầu vào:\n"
+    "Trong một thí nghiệm vật lý, khi tăng nhiệt độ thì thể tích khí thay đổi như thế nào? Options: A. Tăng, B. Giảm, C. Không đổi\n"
+    "Đầu ra:\n"
+    "Quan hệ giữa nhiệt độ và thể tích khí trong thí nghiệm vật lý\n\n"
+    "Đầu vào:\n"
+    "Chọn đáp án đúng: Ai là người viết tác phẩm Truyện Kiều? A. Nguyễn Du B. Nguyễn Trãi C. Hồ Xuân Hương\n"
+    "Đầu ra:\n"
+    "Tác giả của tác phẩm Truyện Kiều là ai?\n\n"
+    "Đầu vào:\n"
+    "Xét cây tìm kiếm sau, với tập đích gồm 2 nút G1 và G2. Giá trị trên mỗi cạnh là chi phí di chuyển giữa 2 nút nối 2 cạnh đó. Hãy cho biết thứ tự duyệt các nút đến khi gặp nút đích (G1 hoặc G2) khi sử dụng tìm kiếm cực tiểu. Options: A. ..., B. ...\n"
+    "Đầu ra:\n"
+    "Thứ tự duyệt các nút trong tìm kiếm cực tiểu\n\n"
+    "Nếu câu hỏi đầu vào đã ngắn gọn, không chứa nhiễu, hãy giữ nguyên. "
+    "Chỉ trả về một câu hỏi đơn, rõ nghĩa, có tính khái quát, phù hợp để sử dụng cho hệ thống tìm kiếm học sâu."
 )
+
+
 
     def __init__(self, ai_service: AIService, cache_size: int = 256) -> None:  # noqa: D401
         """Create a new QueryRefiner.
 
         Args:
-            ai_service: Instance of AIService (GeminiService) used to perform the refinement.
+            ai_service: Instance of AIService used to perform the refinement.
             cache_size: Maximum number of refined queries to keep in memory.
         """
         self.ai_service = ai_service
