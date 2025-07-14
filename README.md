@@ -429,3 +429,61 @@ This project is part of the CK Quiz educational platform.
 ---
 
 **Built with ❤️ for education. Rin-chan is ready to help students learn! 🎓** 
+
+## 🚀 Performance Tuning for Concurrent Uploads
+
+### Environment Variables for Optimization
+
+```bash
+# Concurrent Processing Control
+MAX_CONCURRENT_EMBEDDINGS=3        # Max parallel embedding operations
+EMBEDDING_TIMEOUT_SECONDS=300      # Timeout for embedding operations (5 min)
+FAISS_THREAD_POOL_WORKERS=0        # Thread pool size (0 = auto)
+BATCH_SIZE_DOCUMENTS=10             # Process documents in batches
+
+# Memory Management
+CHUNK_SIZE=1000                     # Text chunk size for processing
+CHUNK_OVERLAP=200                   # Overlap between chunks
+MAX_CHUNKS_PER_DOCUMENT=50          # Limit chunks per document
+```
+
+### Tuning Guidelines
+
+#### For High Volume Uploads (10+ files simultaneously):
+```bash
+MAX_CONCURRENT_EMBEDDINGS=2        # Reduce to prevent resource contention
+EMBEDDING_TIMEOUT_SECONDS=600      # Increase timeout for large files
+FAISS_THREAD_POOL_WORKERS=6        # More workers for CPU-intensive tasks
+BATCH_SIZE_DOCUMENTS=5              # Smaller batches to reduce memory usage
+```
+
+#### For Large Files (>10MB each):
+```bash
+EMBEDDING_TIMEOUT_SECONDS=600      # Longer timeout for large files
+CHUNK_SIZE=800                      # Smaller chunks for faster processing
+MAX_CHUNKS_PER_DOCUMENT=100         # Allow more chunks for large docs
+```
+
+#### For Limited Resources (Low RAM/CPU):
+```bash
+MAX_CONCURRENT_EMBEDDINGS=1        # Process one at a time
+FAISS_THREAD_POOL_WORKERS=2        # Minimal workers
+BATCH_SIZE_DOCUMENTS=3              # Very small batches
+CHUNK_SIZE=500                      # Smaller chunks
+```
+
+### Monitoring Performance
+
+Monitor the logs for these indicators:
+
+- ✅ `Processing batch X/Y` - Batch processing progress
+- ⏱️ `add_documents timed out after X seconds` - Increase timeout
+- 🔄 `Selected X chunks (rerank=on/off)` - Processing efficiency
+- 🚫 `Semaphore blocking` - Too many concurrent operations
+
+### Optimization Tips
+
+1. **Start Conservative**: Begin with default values and adjust based on actual performance
+2. **Monitor Resources**: Watch CPU, memory, and disk I/O during uploads
+3. **Test Incrementally**: Change one parameter at a time to measure impact
+4. **Consider Hardware**: Adjust based on your server's CPU cores and RAM 

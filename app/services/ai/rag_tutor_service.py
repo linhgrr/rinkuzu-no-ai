@@ -15,6 +15,7 @@ from app.services.file_loaders.factory import FileLoaderFactory
 from app.core.config import settings
 from app.services.ai.document_indexer import DocumentIndexer
 from app.services.ai.context_builder import ContextBuilder
+from app.services.ai.query_refiner import QueryRefiner
 from app.utils.collection_utils import get_subject_collection_name
 
 
@@ -82,6 +83,9 @@ class RagTutorService:
             collection_prefix=self.collection_prefix
         )
         self.context_builder = ContextBuilder(max_context_length=self.max_context_length)
+
+        # Query refiner for cleaner vector-search queries
+        self.query_refiner = QueryRefiner(ai_service=self.ai_service)
         
         # Rin-chan personality prompt
         self.system_prompt = """
@@ -234,8 +238,13 @@ NHIỆM VỤ CỦA BẠN:
         """
         try:
             logger.info(f"🤔 Processing question for subject {subject_id}: {question[:100]}...")
-            
-            search_results = await self._search_documents(question, subject_id)
+
+            # 1. Refine the raw user question to obtain concise search query
+            refined_query = await self.query_refiner.refine(question)
+            logger.debug("Refined query: %s", refined_query)
+
+            # 2. Search documents with the refined query (not the full noisy question)
+            search_results = await self._search_documents(refined_query, subject_id)
 
             if not search_results or force_fallback:
                 messages = [ChatMessage(role="system", content=self.fallback_system_prompt)]
@@ -324,6 +333,7 @@ NHIỆM VỤ CỦA BẠN:
                 ai_response.metadata.update({
                     "context_found": True,
                     "subject_id": subject_id,
+                    "refined_query": refined_query,
                     "search_results_count": len(search_results),
                     "reranked_chunks": len(relevant_chunks),
                     "context_sources": [chunk["metadata"].get("filename") for chunk in relevant_chunks],

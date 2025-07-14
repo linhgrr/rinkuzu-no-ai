@@ -56,8 +56,6 @@ class KeyRotationManager:
         self._current_index = 0
         self._lock = asyncio.Lock()
 
-        logger.info(f"Keys: {keys}")
-        logger.info(f"Keys: {self.keys}")
         logger.info(f"Initialized KeyRotationManager with {len(self.keys)} keys")
     
     async def get_next_key(self) -> Optional[str]:
